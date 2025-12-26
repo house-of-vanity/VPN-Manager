@@ -1,15 +1,12 @@
 # VPN Tray Manager
 
-Simple Windows system tray app for managing xray-core VPN servers.
+Simple Windows system tray app for managing all xray-core VPN servers using just one SUB link.
 
 ## Features
 
-- System tray icon with context menu
-- Auto-start enabled VPN servers on launch
+- System tray icon
 - Manage multiple servers from subscription URL
-- Configure local ports and proxy types (SOCKS/HTTP)
 - Enable/disable servers individually
-- Servers restart automatically after config changes
 
 ## Requirements
 
@@ -18,7 +15,7 @@ Simple Windows system tray app for managing xray-core VPN servers.
 
 ## Usage
 
-1. Run `win-test-tray.exe`
+1. Run `Xray-VPN-Manager.exe`
 2. Right-click tray icon → Settings
 3. Enter subscription URL and xray binary path
 4. Check servers you want to enable
@@ -26,8 +23,8 @@ Simple Windows system tray app for managing xray-core VPN servers.
 
 Running servers appear in the tray menu:
 ```
-✓ Server Name (SOCKS:1080)
-✓ Another Server (HTTP:1081)
+✓ USA (SOCKS:1080)
+✓ France (HTTP:1081)
 ---
 Settings
 ---
