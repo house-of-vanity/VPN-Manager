@@ -41,7 +41,7 @@ impl Config {
             .map_err(|_| "Failed to get APPDATA environment variable".to_string())?;
         
         let mut config_dir = PathBuf::from(appdata);
-        config_dir.push("win-test-tray");
+        config_dir.push("Xray-VPN-Manager");
         
         // Create directory if it doesn't exist
         if !config_dir.exists() {
