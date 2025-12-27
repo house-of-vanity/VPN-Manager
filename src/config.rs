@@ -21,6 +21,8 @@ pub struct Config {
     pub xray_binary_path: String,
     #[serde(default)]
     pub server_settings: HashMap<String, ServerSettings>,
+    #[serde(default)]
+    pub autostart: bool,
 }
 
 impl Default for Config {
@@ -29,6 +31,7 @@ impl Default for Config {
             subscription_url: String::new(),
             xray_binary_path: String::new(),
             server_settings: HashMap::new(),
+            autostart: false,
         }
     }
 }
@@ -79,6 +82,65 @@ impl Config {
         
         fs::write(&config_path, json)
             .map_err(|e| format!("Failed to write config file: {}", e))?;
+        
+        Ok(())
+    }
+    
+    /// Set autostart in Windows registry
+    pub fn set_autostart(enabled: bool) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            use windows::{
+                core::w,
+                Win32::System::Registry::{
+                    RegOpenKeyExW, RegSetValueExW, RegDeleteKeyValueW,
+                    HKEY_CURRENT_USER, KEY_WRITE, REG_SZ,
+                },
+            };
+            
+            let key_path = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+            let value_name = w!("Xray-VPN-Manager");
+            
+            unsafe {
+                let mut hkey = Default::default();
+                let result = RegOpenKeyExW(HKEY_CURRENT_USER, key_path, 0, KEY_WRITE, &mut hkey);
+                if result.is_err() {
+                    return Err(format!("Failed to open registry key: {:?}", result));
+                }
+                
+                if enabled {
+                    // Get current executable path
+                    let exe_path = std::env::current_exe()
+                        .map_err(|e| format!("Failed to get exe path: {}", e))?;
+                    let exe_path_str = exe_path.to_string_lossy().to_string();
+                    
+                    let path_wide: Vec<u16> = format!("{}\0", exe_path_str).encode_utf16().collect();
+                    let data = std::slice::from_raw_parts(
+                        path_wide.as_ptr() as *const u8,
+                        path_wide.len() * 2
+                    );
+                    
+                    let result = RegSetValueExW(
+                        hkey,
+                        value_name,
+                        0,
+                        REG_SZ,
+                        Some(data),
+                    );
+                    if result.is_err() {
+                        return Err(format!("Failed to set registry value: {:?}", result));
+                    }
+                } else {
+                    // Remove from autostart
+                    let _ = RegDeleteKeyValueW(hkey, None, value_name);
+                }
+            }
+        }
+        
+        #[cfg(not(windows))]
+        {
+            return Err("Autostart only supported on Windows".to_string());
+        }
         
         Ok(())
     }

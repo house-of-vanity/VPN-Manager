@@ -3,7 +3,7 @@ use windows::{
     core::{PCWSTR, w},
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, WPARAM, HINSTANCE, RECT, BOOL},
-        Graphics::Gdi::{UpdateWindow, HBRUSH, SetBkMode, TRANSPARENT, HDC, GetStockObject, WHITE_BRUSH},
+        Graphics::Gdi::{UpdateWindow, HBRUSH, SetBkMode, TRANSPARENT, HDC, GetStockObject, WHITE_BRUSH, InvalidateRect},
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::*,
     },
@@ -23,10 +23,15 @@ const ID_SAVE_BUTTON: i32 = 1005;
 const ID_CANCEL_BUTTON: i32 = 1006;
 const ID_XRAY_PATH_EDIT: i32 = 1007;
 const ID_XRAY_BROWSE_BUTTON: i32 = 1008;
+const ID_XRAY_DOWNLOAD_BUTTON: i32 = 1009;
+const ID_AUTOSTART_CHECKBOX: i32 = 1010;
 const ID_SERVER_CHECKBOX_BASE: i32 = 2000;  // 2000, 2001, 2002...
 const ID_SERVER_PORT_EDIT_BASE: i32 = 3000; // 3000, 3001, 3002...
 const ID_SERVER_PROXY_COMBO_BASE: i32 = 4000; // 4000, 4001, 4002...
 const ID_SERVER_LABEL_BASE: i32 = 5000; // 5000, 5001, 5002... for "Proxy Port:" labels
+
+// Custom Windows message for download completion
+const WM_DOWNLOAD_COMPLETE: u32 = WM_USER + 2;
 
 // Layout constants for consistent formatting
 const MARGIN: i32 = 15;
@@ -341,7 +346,32 @@ unsafe fn create_controls(parent: HWND, hinstance: HINSTANCE) {
         unsafe { SendMessageW(lbl, WM_SETFONT, WPARAM(hfont.0 as usize), LPARAM(1)); }
     }
     
-    // Xray binary path edit control
+    // Download button (above the path field) - same width as URL edit control
+    let download_btn_text: Vec<u16> = "Download Xray Automatically\0".encode_utf16().collect();
+    let download_btn = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            w!("BUTTON"),
+            PCWSTR::from_raw(download_btn_text.as_ptr()),
+            WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
+            MARGIN + URL_LABEL_WIDTH + 10,
+            row2_y,
+            450,
+            CONTROL_HEIGHT,
+            parent,
+            HMENU(ID_XRAY_DOWNLOAD_BUTTON as _),
+            hinstance,
+            None,
+        ).ok()
+    };
+    if let Some(btn) = download_btn {
+        unsafe { SendMessageW(btn, WM_SETFONT, WPARAM(hfont.0 as usize), LPARAM(1)); }
+    }
+    
+    // Third row Y position (for path field)
+    let row3_y = row2_y + CONTROL_HEIGHT + MARGIN;
+    
+    // Xray binary path edit control - same width as URL edit control
     let xray_path_text_wide: Vec<u16> = format!("{}\0", config.xray_binary_path).encode_utf16().collect();
     let xray_path_edit = unsafe {
         CreateWindowExW(
@@ -350,7 +380,7 @@ unsafe fn create_controls(parent: HWND, hinstance: HINSTANCE) {
             PCWSTR::from_raw(xray_path_text_wide.as_ptr()),
             WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
             MARGIN + URL_LABEL_WIDTH + 10,
-            row2_y,
+            row3_y,
             450,
             CONTROL_HEIGHT,
             parent,
@@ -370,7 +400,7 @@ unsafe fn create_controls(parent: HWND, hinstance: HINSTANCE) {
             PCWSTR::from_raw(browse_btn_text.as_ptr()),
             WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
             MARGIN + URL_LABEL_WIDTH + 10 + 450 + 10,
-            row2_y,
+            row3_y,
             120,
             CONTROL_HEIGHT,
             parent,
@@ -383,8 +413,42 @@ unsafe fn create_controls(parent: HWND, hinstance: HINSTANCE) {
         unsafe { SendMessageW(btn, WM_SETFONT, WPARAM(hfont.0 as usize), LPARAM(1)); }
     }
     
-    // Third row Y position
-    let row3_y = row2_y + CONTROL_HEIGHT + MARGIN;
+    // Fourth row Y position
+    let row4_y = row3_y + CONTROL_HEIGHT + MARGIN;
+    
+    // Autostart checkbox
+    let autostart_text: Vec<u16> = "Start automatically on Windows startup\0".encode_utf16().collect();
+    let autostart_checkbox = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            w!("BUTTON"),
+            PCWSTR::from_raw(autostart_text.as_ptr()),
+            WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+            MARGIN + URL_LABEL_WIDTH + 10,
+            row4_y,
+            450,
+            CONTROL_HEIGHT,
+            parent,
+            HMENU(ID_AUTOSTART_CHECKBOX as _),
+            hinstance,
+            None,
+        ).ok()
+    };
+    if let Some(cb) = autostart_checkbox {
+        unsafe { 
+            SendMessageW(cb, WM_SETFONT, WPARAM(hfont.0 as usize), LPARAM(1));
+            // Set checkbox state based on config
+            SendMessageW(
+                cb,
+                BM_SETCHECK,
+                WPARAM(if config.autostart { 1 } else { 0 }),
+                LPARAM(0),
+            );
+        }
+    }
+    
+    // Fifth row Y position
+    let row5_y = row4_y + CONTROL_HEIGHT + MARGIN;
     
     // Label "VPN Servers:"
     let list_label: Vec<u16> = "VPN Servers:\0".encode_utf16().collect();
@@ -395,7 +459,7 @@ unsafe fn create_controls(parent: HWND, hinstance: HINSTANCE) {
             PCWSTR::from_raw(list_label.as_ptr()),
             WS_CHILD | WS_VISIBLE,
             MARGIN,
-            row3_y,
+            row5_y,
             200,
             LABEL_HEIGHT,
             parent,
@@ -409,7 +473,7 @@ unsafe fn create_controls(parent: HWND, hinstance: HINSTANCE) {
     }
     
     // Server list container Y position
-    let container_y = row3_y + LABEL_HEIGHT + 10;
+    let container_y = row5_y + LABEL_HEIGHT + 10;
     
     // Get client area size to calculate container height dynamically
     let mut client_rect = RECT::default();
@@ -694,6 +758,59 @@ unsafe extern "system" fn settings_window_proc(
                     }
                 }
             }
+            // Handle Download button for Xray binary
+            else if control_id == ID_XRAY_DOWNLOAD_BUTTON as usize && notification_code == 0 {
+                println!("Download button clicked!");
+                
+                // Disable download button during download
+                if let Ok(download_btn) = unsafe { GetDlgItem(hwnd, ID_XRAY_DOWNLOAD_BUTTON) } {
+                    if !download_btn.is_invalid() {
+                        unsafe { 
+                            // Disable by setting WS_DISABLED style
+                            let style = GetWindowLongW(download_btn, GWL_STYLE);
+                            SetWindowLongW(download_btn, GWL_STYLE, style | WS_DISABLED.0 as i32);
+                            let _ = InvalidateRect(download_btn, None, true);
+                            
+                            let downloading_text: Vec<u16> = "Downloading...\0".encode_utf16().collect();
+                            SetWindowTextW(download_btn, PCWSTR::from_raw(downloading_text.as_ptr())).ok();
+                        }
+                    }
+                }
+                
+                // Spawn background thread for download
+                let hwnd_raw = hwnd.0 as isize;
+                std::thread::spawn(move || {
+                    match download_xray_latest() {
+                        Ok(xray_exe_path) => {
+                            println!("Downloaded Xray to: {}", xray_exe_path);
+                            
+                            // Update UI on main thread
+                            unsafe {
+                                let hwnd = HWND(hwnd_raw as *mut _);
+                                
+                                // Allocate string on heap for passing to main thread
+                                let path_box = Box::new(xray_exe_path);
+                                let path_ptr = Box::into_raw(path_box);
+                                
+                                let _ = PostMessageW(hwnd, WM_DOWNLOAD_COMPLETE, WPARAM(1), LPARAM(path_ptr as isize));
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to download Xray: {}", e);
+                            
+                            // Send error message
+                            unsafe {
+                                let hwnd = HWND(hwnd_raw as *mut _);
+                                
+                                let error_box = Box::new(e);
+                                let error_ptr = Box::into_raw(error_box);
+                                
+                                let _ = PostMessageW(hwnd, WM_DOWNLOAD_COMPLETE, WPARAM(0), LPARAM(error_ptr as isize));
+                            }
+                        }
+                    }
+                });
+            }
             // Handle Save button
             else if control_id == ID_SAVE_BUTTON as usize && notification_code == 0 {
                 
@@ -725,6 +842,16 @@ unsafe extern "system" fn settings_window_proc(
                     String::new()
                 };
                 
+                // Get autostart checkbox state
+                let autostart = unsafe {
+                    if let Ok(checkbox) = GetDlgItem(hwnd, ID_AUTOSTART_CHECKBOX) {
+                        let state = SendMessageW(checkbox, BM_GETCHECK, WPARAM(0), LPARAM(0));
+                        state.0 == 1
+                    } else {
+                        false
+                    }
+                };
+                
                 // Build server_settings HashMap from current servers
                 use std::collections::HashMap;
                 let mut server_settings = HashMap::new();
@@ -748,10 +875,16 @@ unsafe extern "system" fn settings_window_proc(
                     subscription_url,
                     xray_binary_path,
                     server_settings,
+                    autostart,
                 };
                 
                 match config.save() {
                     Ok(_) => {
+                        // Apply autostart setting to registry
+                        if let Err(e) = crate::config::Config::set_autostart(autostart) {
+                            eprintln!("Failed to set autostart: {}", e);
+                        }
+                        
                         // Restart xray servers with new config
                         crate::restart_xray_servers();
                         
@@ -799,7 +932,9 @@ unsafe extern "system" fn settings_window_proc(
             let row1_y = MARGIN;
             let row2_y = row1_y + CONTROL_HEIGHT + MARGIN;
             let row3_y = row2_y + CONTROL_HEIGHT + MARGIN;
-            let container_y = row3_y + LABEL_HEIGHT + 10;
+            let row4_y = row3_y + CONTROL_HEIGHT + MARGIN;
+            let row5_y = row4_y + CONTROL_HEIGHT + MARGIN;
+            let container_y = row5_y + LABEL_HEIGHT + 10;
             let container_height = height - container_y - MARGIN - BUTTON_ROW_HEIGHT;
             let buttons_y = container_y + container_height + 10;
             
@@ -853,7 +988,7 @@ unsafe extern "system" fn settings_window_proc(
                             browse_btn,
                             None,
                             width - 120 - MARGIN,
-                            row2_y,
+                            row3_y,
                             0, 0,
                             SWP_NOSIZE | SWP_NOZORDER,
                         ).ok();
@@ -916,6 +1051,65 @@ unsafe extern "system" fn settings_window_proc(
                     }
                 }
             }
+            LRESULT(0)
+        }
+        _ if msg == WM_DOWNLOAD_COMPLETE => {
+            // Custom message: download complete
+            let success = wparam.0 == 1;
+            let data_ptr = lparam.0 as *mut String;
+            
+            if success {
+                // Success - update path field
+                unsafe {
+                    let path = Box::from_raw(data_ptr);
+                    
+                    // Update edit control
+                    if let Ok(xray_edit) = GetDlgItem(hwnd, ID_XRAY_PATH_EDIT) {
+                        let path_wide: Vec<u16> = format!("{}\0", path).encode_utf16().collect();
+                        SetWindowTextW(xray_edit, PCWSTR::from_raw(path_wide.as_ptr())).ok();
+                    }
+                    
+                    // Show success message
+                    let msg: Vec<u16> = "Xray binary downloaded successfully!\0".encode_utf16().collect();
+                    let title: Vec<u16> = "Success\0".encode_utf16().collect();
+                    MessageBoxW(
+                        hwnd,
+                        PCWSTR::from_raw(msg.as_ptr()),
+                        PCWSTR::from_raw(title.as_ptr()),
+                        MB_OK | MB_ICONINFORMATION,
+                    );
+                }
+            } else {
+                // Error - show error message
+                unsafe {
+                    let error_msg = Box::from_raw(data_ptr);
+                    
+                    let msg: Vec<u16> = format!("Failed to download Xray:\n{}\0", error_msg).encode_utf16().collect();
+                    let title: Vec<u16> = "Error\0".encode_utf16().collect();
+                    MessageBoxW(
+                        hwnd,
+                        PCWSTR::from_raw(msg.as_ptr()),
+                        PCWSTR::from_raw(title.as_ptr()),
+                        MB_OK | MB_ICONERROR,
+                    );
+                }
+            }
+            
+            // Re-enable download button
+            if let Ok(download_btn) = unsafe { GetDlgItem(hwnd, ID_XRAY_DOWNLOAD_BUTTON) } {
+                if !download_btn.is_invalid() {
+                    unsafe {
+                        // Re-enable by removing WS_DISABLED style
+                        let style = GetWindowLongW(download_btn, GWL_STYLE);
+                        SetWindowLongW(download_btn, GWL_STYLE, style & !(WS_DISABLED.0 as i32));
+                        let _ = InvalidateRect(download_btn, None, true);
+                        
+                        let download_text: Vec<u16> = "Download\0".encode_utf16().collect();
+                        SetWindowTextW(download_btn, PCWSTR::from_raw(download_text.as_ptr())).ok();
+                    }
+                }
+            }
+            
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -1198,7 +1392,7 @@ unsafe fn resize_server_list_items(container: HWND) {
                     }
                 }
                 
-                // Reposition combo
+                // Reposition combo (keep dropdown height at 200)
                 if let Ok(combo) = unsafe { GetDlgItem(container, ID_SERVER_PROXY_COMBO_BASE + idx as i32) } {
                     if !combo.is_invalid() {
                         unsafe {
@@ -1208,7 +1402,7 @@ unsafe fn resize_server_list_items(container: HWND) {
                                 right_controls_x + LABEL_WIDTH + 5 + PORT_EDIT_WIDTH + 10,
                                 y_pos,
                                 COMBO_WIDTH,
-                                CONTROL_HEIGHT,
+                                200, // Keep dropdown height
                                 SWP_NOZORDER,
                             ).ok();
                         }
@@ -1224,4 +1418,130 @@ unsafe fn resize_server_list_items(container: HWND) {
 unsafe extern "system" fn destroy_child_window(hwnd: HWND, _: LPARAM) -> BOOL {
     unsafe { DestroyWindow(hwnd).ok() };
     true.into()
+}
+
+/// Download latest Xray-core binary from GitHub releases
+fn download_xray_latest() -> Result<String, String> {
+    use std::fs;
+    use std::io::Write;
+    
+    println!("Starting Xray download...");
+    
+    // Get config directory
+    let config_dir = crate::config::Config::get_config_path()
+        .map_err(|e| format!("Failed to get config path: {}", e))?
+        .parent()
+        .ok_or("Failed to get config directory")?
+        .to_path_buf();
+    
+    // Create xray subdirectory
+    let xray_dir = config_dir.join("xray");
+    fs::create_dir_all(&xray_dir)
+        .map_err(|e| format!("Failed to create xray directory: {}", e))?;
+    
+    // Fetch latest release page to get actual version
+    println!("Fetching latest release info...");
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let response = client
+        .get("https://github.com/XTLS/Xray-core/releases/latest")
+        .send()
+        .map_err(|e| format!("Failed to fetch latest release: {}", e))?;
+    
+    // Get redirect location to determine version
+    let location = response
+        .headers()
+        .get("location")
+        .ok_or("No redirect location found")?
+        .to_str()
+        .map_err(|_| "Invalid redirect location")?;
+    
+    println!("Redirect location: {}", location);
+    
+    // Extract version from redirect URL (e.g., /XTLS/Xray-core/releases/tag/v25.12.8)
+    let version = location
+        .split('/')
+        .last()
+        .ok_or("Failed to parse version from redirect")?;
+    
+    println!("Latest version: {}", version);
+    
+    // Construct download URL
+    let download_url = format!(
+        "https://github.com/XTLS/Xray-core/releases/download/{}/Xray-windows-64.zip",
+        version
+    );
+    
+    println!("Downloading from: {}", download_url);
+    
+    // Download zip file
+    let zip_data = reqwest::blocking::get(&download_url)
+        .map_err(|e| format!("Failed to download zip: {}", e))?
+        .bytes()
+        .map_err(|e| format!("Failed to read zip data: {}", e))?;
+    
+    println!("Downloaded {} bytes", zip_data.len());
+    
+    // Save zip temporarily
+    let zip_path = xray_dir.join("xray.zip");
+    let mut zip_file = fs::File::create(&zip_path)
+        .map_err(|e| format!("Failed to create zip file: {}", e))?;
+    zip_file.write_all(&zip_data)
+        .map_err(|e| format!("Failed to write zip file: {}", e))?;
+    
+    println!("Extracting zip...");
+    
+    // Extract zip
+    let zip_file = fs::File::open(&zip_path)
+        .map_err(|e| format!("Failed to open zip file: {}", e))?;
+    
+    let mut archive = zip::ZipArchive::new(zip_file)
+        .map_err(|e| format!("Failed to open zip archive: {}", e))?;
+    
+    // Extract all files
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+        
+        let outpath = match file.enclosed_name() {
+            Some(path) => xray_dir.join(path),
+            None => continue,
+        };
+        
+        if file.name().ends_with('/') {
+            // Directory
+            fs::create_dir_all(&outpath)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        } else {
+            // File
+            if let Some(parent) = outpath.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+            }
+            
+            let mut outfile = fs::File::create(&outpath)
+                .map_err(|e| format!("Failed to create file: {}", e))?;
+            
+            std::io::copy(&mut file, &mut outfile)
+                .map_err(|e| format!("Failed to extract file: {}", e))?;
+            
+            println!("Extracted: {}", outpath.display());
+        }
+    }
+    
+    // Delete zip file
+    let _ = fs::remove_file(&zip_path);
+    
+    // Find xray.exe in extracted files
+    let xray_exe = xray_dir.join("xray.exe");
+    if !xray_exe.exists() {
+        return Err("xray.exe not found in extracted files".to_string());
+    }
+    
+    println!("Xray extracted to: {}", xray_exe.display());
+    
+    Ok(xray_exe.to_string_lossy().to_string())
 }
