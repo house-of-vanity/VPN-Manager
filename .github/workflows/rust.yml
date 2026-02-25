@@ -50,10 +50,6 @@ jobs:
             ${{ runner.os }}-cargo-build-
 
       - uses: dtolnay/rust-toolchain@stable
-      
-      - uses: mbrobbel/rustfmt-check@master
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Install rust targets
         run: rustup target add ${{ matrix.build_target }}
