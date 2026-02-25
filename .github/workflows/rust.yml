@@ -1,0 +1,121 @@
+name: Rust static build and publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: vpn-manager
+
+jobs:
+  build:
+    name: Build static binary
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ windows-latest ]
+        include:
+          - os: windows-latest
+            build_target: x86_64-pc-windows-msvc
+            platform_name: windows-amd64
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+      
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+      
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
+      - uses: dtolnay/rust-toolchain@stable
+      
+      - uses: mbrobbel/rustfmt-check@master
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Install rust targets
+        run: rustup target add ${{ matrix.build_target }}
+        
+      - name: Build Windows
+        if: matrix.os == 'windows-latest'
+        run: cargo build --target ${{ matrix.build_target }} --release
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}_${{ matrix.platform_name }}
+          path: target/${{ matrix.build_target }}/release/${{ env.BINARY_NAME }}*
+
+  release:
+    name: Create Release Page
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version
+        run: echo "VERSION=$(grep -P '^version = \"\d+\.\d+\.\d+\"' Cargo.toml | awk -F '\"' '{print $2}')" >> $GITHUB_ENV
+      - name: Show version
+        run: echo ${{ env.VERSION }}
+      - uses: ncipollo/release-action@v1
+        id: create_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          allowUpdates: true
+          body: "Release VPN-manager ${{ env.VERSION }}."
+
+  upload:
+    name: Upload Release Assets
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest]
+        include:
+          - os: windows-latest
+            platform_name: windows-amd64
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/download-artifact@v4
+        name: Download ${{ matrix.platform_name }} artifact
+        with:
+          name: ${{ env.BINARY_NAME }}_${{ matrix.platform_name }}
+          path: ${{ env.BINARY_NAME }}_${{ matrix.platform_name }}
+          
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.release.outputs.upload_url }}
+          asset_path: ${{ env.BINARY_NAME }}_${{ matrix.platform_name }}/${{ env.BINARY_NAME }}${{ matrix.platform_name == 'windows-amd64' && '.exe' || '' }}
+          asset_name: ${{ env.BINARY_NAME }}_${{ matrix.platform_name }}${{ matrix.platform_name == 'windows-amd64' && '.exe' || '' }}
+          asset_content_type: application/octet-stream
